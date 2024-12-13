@@ -610,6 +610,8 @@ func CDCFlowWorkflow(
 			return state, err
 		}
 
+		// the first event that returns `GetContinueAsNewSuggested() == true` is 4097
+		// All events of type EVENT_TYPE_WORKFLOW_TASK_STARTED thereafter return "suggestContinueAsNew": true
 		if state.ActiveSignal == model.PauseSignal || workflow.GetInfo(ctx).GetContinueAsNewSuggested() {
 			restart = true
 			if syncFlowFuture != nil {
@@ -627,13 +629,23 @@ func CDCFlowWorkflow(
 			}
 
 			for ctx.Err() == nil && (!finished || mainLoopSelector.HasPending()) {
-				mainLoopSelector.Select(ctx)
+				// the problem is that the workflow gets stuck here waiting for new signals
+				// Thus this execution never ends up making it to the ContinueAsNewError
+				//mainLoopSelector.Select(ctx)
 			}
 
 			if err := ctx.Err(); err != nil {
 				logger.Info("mirror canceled", slog.Any("error", err))
 				return nil, err
 			}
+
+			// instead, do something like this to drain the signals
+			_, ok := flowSignalChan.ReceiveAsync()
+			if !ok {
+				fmt.Println("no more signals")
+			}
+			// consider whether to handle the signals now or passing it onto the next execution
+			// Here's a forum post on this subject https://community.temporal.io/t/continueasnew-signals/1008
 
 			return state, workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, cfg, state)
 		}
